@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SRT Formatter Tool</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    textarea { width: 100%; height: 300px; margin-bottom: 20px; }
+    button { padding: 10px 20px; font-size: 16px; }
+  </style>
+</head>
+<body>
+
+<h1>SRT Formatter</h1>
+
+<textarea id="inputSRT" placeholder="Paste your SRT content here..."></textarea>
+<br>
+<button onclick="formatSRT()">Format SRT</button>
+<br><br>
+<textarea id="outputSRT" placeholder="Formatted SRT will appear here..."></textarea>
+
+<script>
+function parseTime(timeString) {
+  const [hours, minutes, rest] = timeString.split(':');
+  const [seconds, milliseconds] = rest.split(',');
+  return (
+    parseInt(hours) * 3600000 +
+    parseInt(minutes) * 60000 +
+    parseInt(seconds) * 1000 +
+    parseInt(milliseconds)
+  );
+}
+
+function formatTime(ms) {
+  let hours = Math.floor(ms / 3600000);
+  ms %= 3600000;
+  let minutes = Math.floor(ms / 60000);
+  ms %= 60000;
+  let seconds = Math.floor(ms / 1000);
+  let milliseconds = ms % 1000;
+  return (
+    String(hours).padStart(2, '0') + ':' +
+    String(minutes).padStart(2, '0') + ':' +
+    String(seconds).padStart(2, '0') + ',' +
+    String(milliseconds).padStart(3, '0')
+  );
+}
+
+function wrapText(text) {
+  const words = text.split(' ');
+  let lines = [];
+  let currentLine = '';
+
+  for (let word of words) {
+    if ((currentLine + ' ' + word).trim().length <= 42) {
+      currentLine += ' ' + word;
+    } else {
+      lines.push(currentLine.trim());
+      currentLine = word;
+    }
+  }
+  if (currentLine.trim() !== '') {
+    lines.push(currentLine.trim());
+  }
+
+  // Now fix lines: make sure second line is not lonely
+  let fixedLines = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (i + 1 < lines.length) {
+      const secondLineWords = lines[i + 1].split(' ');
+      if (secondLineWords.length === 1) {
+        // move last word of current line to next line
+        const currentWords = lines[i].split(' ');
+        if (currentWords.length > 1) {
+          const movedWord = currentWords.pop();
+          lines[i] = currentWords.join(' ');
+          lines[i + 1] = movedWord + ' ' + lines[i + 1];
+        }
+      }
+    }
+    fixedLines.push(lines[i]);
+    i++;
+  }
+
+  return fixedLines;
+}
+
+
+function formatContent(content) {
+  // Split at each new speaker or keep together otherwise
+  let parts = content.split(/(?=-\s)/);
+  let allLines = [];
+
+  for (let part of parts) {
+    let wrapped = wrapText(part.trim());
+    allLines.push(...wrapped);
+  }
+
+  return allLines;
+}
+
+function findSplitPoint(lines) {
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i][0] === '-' || /[.?!]$/.test(lines[i - 1])) {
+      return i;
+    }
+  }
+  return Math.ceil(lines.length / 2);
+}
+
+function recursiveSplit(lines, startTime, endTime, counter) {
+  const blocks = [];
+  const duration = endTime - startTime;
+
+  if (lines.length <= 2) {
+    blocks.push({
+      number: counter,
+      start: startTime,
+      end: endTime,
+      lines: lines
+    });
+    return blocks;
+  }
+
+  let splitIndex = findSplitPoint(lines);
+
+  const firstLines = lines.slice(0, splitIndex);
+  const secondLines = lines.slice(splitIndex);
+
+  const midTime = startTime + Math.floor(duration * (splitIndex / lines.length));
+
+  blocks.push({
+    number: counter,
+    start: startTime,
+    end: midTime,
+    lines: firstLines
+  });
+
+  // Recursively split second half
+  blocks.push(...recursiveSplit(secondLines, midTime + 1, endTime, counter + 1));
+
+  return blocks;
+}
+
+function formatSRT() {
+  const input = document.getElementById('inputSRT').value;
+  const blocks = input.trim().split(/\n\n+/);
+  let newBlocks = [];
+
+  // Get starting number from first block
+  let startNumber = parseInt(blocks[0].split('\n')[0]);
+  let counter = startNumber;
+
+  for (let block of blocks) {
+    const lines = block.split('\n');
+    if (lines.length < 3) continue; // invalid block, skip
+
+    const number = lines[0];
+    const times = lines[1];
+    const contentLines = lines.slice(2);
+    const content = contentLines.join(' ').replace(/\s*-\s*/g, ' - ');
+
+    const [startTimeStr, endTimeStr] = times.split(' --> ');
+    const startTime = parseTime(startTimeStr);
+    const endTime = parseTime(endTimeStr);
+
+    let formattedLines = formatContent(content);
+
+    let splitBlocks = recursiveSplit(formattedLines, startTime, endTime, counter);
+
+    for (let b of splitBlocks) {
+      newBlocks.push([
+        b.number,
+        formatTime(b.start) + ' --> ' + formatTime(b.end),
+        ...b.lines
+      ]);
+    }
+
+    counter += splitBlocks.length;
+  }
+
+  // Re-assemble into string
+  let output = newBlocks.map(block => block.join('\n')).join('\n\n');
+  document.getElementById('outputSRT').value = output;
+}
+</script>
+
+</body>
+</html>
